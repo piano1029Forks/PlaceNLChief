@@ -4,6 +4,7 @@ import multer from 'multer';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {PNG} from 'pngjs';
+import pixelmatch from 'pixelmatch'
 import {
     BASE_URL,
     DISCORD_CLIENT_ID,
@@ -115,6 +116,19 @@ router.post('/order', upload.fields([{
     const order = req.files.order[0];
     const orderPng = PNG.sync.read(fs.readFileSync(order.path));
 
+    const previousOrder = (await chief.sql`SELECT * FROM orders ORDER BY created_at DESC LIMIT 1;`)[0]
+    const previousOrderPng = PNG.sync.read(fs.readFileSync(path.join(IMAGES_DIRECTORY, `${previousOrder.id}.png`)));
+    const orderDiff = new PNG({width: order.witdh, height: order.height});
+
+    if (order.width !== previousOrder.width || order.height !== previousOrder.height) {
+        // Diff generation doesn't work with different dimensions
+        // Smaller threshold means more sensitivity, as this is
+        // pixel art, we want the most sensitivity.
+        pixelmatch(orderPng.data, previousOrderPng.data, orderDiff.data, order.width, order.height, {threshold: 0});
+    }
+
+    fs.writeFileSync(path.join(IMAGES_DIRECTORY, `${id}-diff.png`), PNG.sync.write(orderDiff))
+
     let avatar = `https://cdn.discordapp.com/embed/avatars/${userData.discriminator % 5}.png`;
     if (userData.avatar) {
         avatar = `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}${userData.avatar.startsWith('a_') ? '.gif' : '.png'}`;
@@ -156,7 +170,8 @@ router.post('/order', upload.fields([{
         } : null,
         images: {
             order: `${BASE_URL}/orders/${id}.png`,
-            priority: req.files.priority ? `${BASE_URL}/orders/${id}-priority.png` : null
+            priority: req.files.priority ? `${BASE_URL}/orders/${id}-priority.png` : null,
+            diff: `${BASE_URL}/orders/${id}-diff.png`
         },
         offset: {
             x: xOffset,
